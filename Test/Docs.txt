@@ -1,3 +1,59 @@
 Hello sivakumar
 Hello Canvas
 Hello India
+
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.transforms.PTransform;
+import org.apache.beam.sdk.values.PCollection;
+import org.apache.beam.sdk.transforms.MapElements;
+import org.apache.beam.sdk.values.TypeDescriptors;
+
+public class GreetingTransform extends PTransform<PCollection<String>, PCollection<String>> {
+
+    @Override
+    public PCollection<String> expand(PCollection<String> input) {
+
+        return input
+            // Remove header row (where first column is "id")
+            .apply("SkipHeader", ParDo.of(new DoFn<String, String>() {
+                private boolean headerSkipped = false;
+
+                @ProcessElement
+                public void processElement(@Element String line, OutputReceiver<String> out) {
+                    String[] parts = line.split(",", -1);
+                    if (!headerSkipped && parts.length > 0 && parts[0].trim().equalsIgnoreCase("id")) {
+                        headerSkipped = true;
+                        return;
+                    }
+                    out.output(line);
+                }
+            }))
+
+            // Filter valid rows: numeric ID and role == Manager
+            .apply("FilterValidManagers", ParDo.of(new DoFn<String, String>() {
+                @ProcessElement
+                public void processElement(@Element String line, OutputReceiver<String> out) {
+                    String[] parts = line.split(",", -1);
+                    if (parts.length < 3) return;
+
+                    String id = parts[0].trim();
+                    String role = parts[2].trim();
+
+                    if (!id.isEmpty() && id.matches("\\d+") && role.equalsIgnoreCase("Manager")) {
+                        out.output(line);
+                    }
+                }
+            }))
+
+            // Generate greeting using second column (name)
+            .apply("CreateGreetings", MapElements
+                .into(TypeDescriptors.strings())
+                .via((String line) -> {
+                    String[] parts = line.split(",", -1);
+                    String name = parts[1].trim();
+                    return "Hello, " + name + "!";
+                }));
+    }
+}
+
