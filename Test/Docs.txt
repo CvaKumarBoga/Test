@@ -46,6 +46,78 @@ public class GreetingTransform extends PTransform<PCollection<String>, PCollecti
                 }
             }))
 
+
+
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.options.PipelineOptionsFactory;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.transforms.Create;
+import org.apache.beam.sdk.values.PCollection;
+
+import java.util.Arrays;
+import java.util.List;
+
+public class CsvHeaderTrailerValidator {
+
+    static final List<String> HEADER_SCHEMA = Arrays.asList("Hid", "name", "sal");
+    static final List<String> TRAILER_SCHEMA = Arrays.asList("Tid", "Record", "count");
+
+    public static void main(String[] args) {
+        Pipeline pipeline = Pipeline.create(
+                PipelineOptionsFactory.fromArgs(args).withValidation().create());
+
+        PCollection<String> lines = pipeline.apply("ReadCSV", TextIO.read().from("input.csv"));
+
+        lines.apply("ValidateHeaderTrailer", ParDo.of(new DoFn<String, String>() {
+            boolean headerValidated = false;
+
+            @ProcessElement
+            public void processElement(ProcessContext c) {
+                String line = c.element();
+
+                if (line.startsWith("H")) {
+                    List<String> headerFields = Arrays.asList(line.split(","));
+                    if (validateSchema(headerFields, HEADER_SCHEMA)) {
+                        headerValidated = true;
+                        System.out.println("Header valid: " + line);
+                    } else {
+                        System.err.println("Invalid Header: " + line);
+                    }
+                } else if (line.startsWith("T")) {
+                    List<String> trailerFields = Arrays.asList(line.split(","));
+                    if (validateSchema(trailerFields, TRAILER_SCHEMA)) {
+                        System.out.println("Trailer valid: " + line);
+                    } else {
+                        System.err.println("Invalid Trailer: " + line);
+                    }
+                } else {
+                    // Data lines (non-header, non-trailer)
+                    if (headerValidated) {
+                        c.output(line);
+                    } else {
+                        System.err.println("Data found before valid header: " + line);
+                    }
+                }
+            }
+
+            private boolean validateSchema(List<String> actual, List<String> expected) {
+                if (actual.size() != expected.size()) return false;
+                for (int i = 0; i < actual.size(); i++) {
+                    if (!actual.get(i).trim().equalsIgnoreCase(expected.get(i))) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        })).apply("WriteValidData", TextIO.write().to("output").withSuffix(".txt").withoutSharding());
+
+        pipeline.run().waitUntilFinish();
+    }
+}
+
+
             // Generate greeting using second column (name)
             .apply("CreateGreetings", MapElements
                 .into(TypeDescriptors.strings())
