@@ -129,3 +129,62 @@ public class CsvHeaderTrailerValidator {
     }
 }
 
+
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.io.parquet.ParquetIO;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.values.PCollection;
+import org.apache.parquet.example.data.simple.SimpleGroup;
+import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.OriginalType;
+import org.apache.parquet.schema.PrimitiveType;
+import org.apache.parquet.schema.Types;
+
+public class CsvToParquet {
+
+    public static void main(String[] args) {
+
+        // Define Parquet schema
+        MessageType schema = Types.buildMessage()
+            .required(PrimitiveType.PrimitiveTypeName.BINARY).as(OriginalType.UTF8).named("name")
+            .required(PrimitiveType.PrimitiveTypeName.INT32).named("age")
+            .named("Person");
+
+        Pipeline pipeline = Pipeline.create();
+
+        // Read CSV lines
+        PCollection<String> lines = pipeline.apply("Read CSV", TextIO.read().from("input.csv"));
+
+        // Parse CSV and convert to SimpleGroup
+        PCollection<SimpleGroup> records = lines.apply("Parse CSV", ParDo.of(new DoFn<String, SimpleGroup>() {
+            private boolean headerSkipped = false;
+
+            @ProcessElement
+            public void processElement(ProcessContext c) {
+                String line = c.element();
+                if (!headerSkipped && line.contains("name")) {
+                    headerSkipped = true;
+                    return; // skip header
+                }
+
+                String[] parts = line.split(",");
+                if (parts.length >= 2) {
+                    SimpleGroup group = new SimpleGroup(schema);
+                    group.add("name", parts[0]);
+                    group.add("age", Integer.parseInt(parts[1]));
+                    c.output(group);
+                }
+            }
+        }));
+
+        // Write to Parquet
+        records.apply("Write to Parquet", ParquetIO.write(schema)
+                .to("output/people")        // Output will be people-00000-of-00001.parquet
+                .withSuffix(".parquet"));
+
+        pipeline.run().waitUntilFinish();
+    }
+}
+
