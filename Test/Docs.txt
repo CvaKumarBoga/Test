@@ -260,3 +260,32 @@ public class ParquetToPostgres {
         pipeline.run().waitUntilFinish();
     }
 }
+
+
+
+package com.example.pipeline.config;
+
+import org.apache.beam.sdk.io.jdbc.JdbcIO;
+
+import java.util.Properties;
+
+public class DbConfig {
+
+    public static JdbcIO.DataSourceConfiguration getPostgresConfig() {
+        Properties properties = new Properties();
+
+        // Custom JDBC properties
+        properties.setProperty("reWriteBatchedInserts", "true");  // Required for PostgreSQL batch efficiency
+        properties.setProperty("ssl", "false");  // Enable if using SSL
+        properties.setProperty("connectTimeout", "10");  // in seconds
+        properties.setProperty("socketTimeout", "60");   // in seconds
+        properties.setProperty("tcpKeepAlive", "true");  // maintain idle connections
+
+        return JdbcIO.DataSourceConfiguration.create(
+                        "org.postgresql.Driver",
+                        "jdbc:postgresql://localhost:5432/your_db")
+                .withUsername("your_username")
+                .withPassword("your_password")
+                .withConnectionProperties(properties);
+    }
+}
