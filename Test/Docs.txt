@@ -289,3 +289,55 @@ public class DbConfig {
                 .withConnectionProperties(properties);
     }
 }
+
+
+
+import java.io.IOException;
+import java.util.logging.*;
+
+public class ErrorLogFileApp {
+
+    private static final Logger logger = Logger.getLogger(ErrorLogFileApp.class.getName());
+
+    public static void main(String[] args) {
+        setupErrorLogger();
+
+        logger.info("Application started.");
+
+        try {
+            simulateBusinessLogic();
+        } catch (Exception e) {
+            logger.log(Level.SEVERE, "Exception caught in main method", e);
+        }
+
+        logger.info("Application finished.");
+    }
+
+    private static void setupErrorLogger() {
+        try {
+            // Create error log file at the start of the program
+            Handler fileHandler = new FileHandler("error-log.txt", true); // true = append to existing
+            fileHandler.setFormatter(new SimpleFormatter());
+            fileHandler.setLevel(Level.ALL);
+
+            logger.addHandler(fileHandler);
+            logger.setLevel(Level.ALL);
+            logger.setUseParentHandlers(false); // Avoid logging to console
+
+            logger.info("Error log file initialized.");
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static void simulateBusinessLogic() {
+        logger.info("Simulating logic...");
+
+        // Simulate error
+        String data = null;
+        int length = data.length(); // This will throw NullPointerException
+
+        logger.info("This line won't execute due to exception above.");
+    }
+}
