@@ -371,3 +371,57 @@ public class ErrorLogFileApp {
     </exclusion>
   </exclusions>
 </dependency>
+
+
+
+
+public static void truncateAndInsert(String tableName, List<YourDataModel> dataList) {
+    Connection connection = null;
+    PreparedStatement truncateStatement = null;
+    PreparedStatement insertStatement = null;
+
+    try {
+        JdbcIO.DataSourceConfiguration postgresConfig = PostgresConfig.getPostgresConfig();
+        connection = postgresConfig.buildDataSource().getConnection();
+        connection.setAutoCommit(false); // Begin transaction
+
+        // Step 1: Truncate table
+        String truncateQuery = "TRUNCATE TABLE " + tableName;
+        truncateStatement = connection.prepareStatement(truncateQuery);
+        truncateStatement.executeUpdate();
+        LOG.info("Table truncated: {}", tableName);
+
+        // Step 2: Insert data
+        String insertQuery = "INSERT INTO " + tableName + " (column1, column2) VALUES (?, ?)";
+        insertStatement = connection.prepareStatement(insertQuery);
+
+        for (YourDataModel item : dataList) {
+            insertStatement.setString(1, item.getColumn1());
+            insertStatement.setInt(2, item.getColumn2());
+            insertStatement.addBatch();
+        }
+
+        int[] result = insertStatement.executeBatch();
+        LOG.info("Inserted rows: {}", Arrays.stream(result).sum());
+
+        connection.commit(); // Commit if all goes well
+    } catch (Exception e) {
+        LOG.error("Error during truncate and insert: {}", e.getMessage());
+        if (connection != null) {
+            try {
+                connection.rollback();
+                LOG.warn("Transaction rolled back.");
+            } catch (SQLException rollbackEx) {
+                LOG.error("Failed to rollback: {}", rollbackEx.getMessage());
+            }
+        }
+    } finally {
+        try {
+            if (truncateStatement != null) truncateStatement.close();
+            if (insertStatement != null) insertStatement.close();
+            if (connection != null) connection.close();
+        } catch (SQLException closeEx) {
+            LOG.warn("Failed to close DB resources: {}", closeEx.getMessage());
+        }
+    }
+}
