@@ -462,3 +462,66 @@ public static void truncateAndInsert(String tableName, List<YourDataModel> dataL
 
 
 
+
+<configuration>
+
+    <property name="LOG_DIR" value="${log.dir:-logs}" />
+
+    <!-- Console Appender -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- General Application Log -->
+    <appender name="APP_LOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/application.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/application.%d{yyyy-MM-dd}.log</fileNamePattern>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} %-5level %logger - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- IO Exceptions Log -->
+    <appender name="IO_EXCEPTIONS" class="ch.qos.logback.core.FileAppender">
+        <file>${LOG_DIR}/io-exceptions.log</file>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>ERROR</level>
+        </filter>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} %-5level %logger - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- General Exceptions Log -->
+    <appender name="GENERIC_ERRORS" class="ch.qos.logback.core.FileAppender">
+        <file>${LOG_DIR}/general-errors.log</file>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>ERROR</level>
+        </filter>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} %-5level %logger - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Root Logger -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="APP_LOG" />
+    </root>
+
+    <!-- Logger for IOExceptions -->
+    <logger name="io-exception-logger" level="ERROR" additivity="false">
+        <appender-ref ref="IO_EXCEPTIONS" />
+    </logger>
+
+    <!-- Logger for General Errors -->
+    <logger name="generic-error-logger" level="ERROR" additivity="false">
+        <appender-ref ref="GENERIC_ERRORS" />
+    </logger>
+
+</configuration>
+
