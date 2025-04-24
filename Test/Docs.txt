@@ -525,3 +525,41 @@ public static void truncateAndInsert(String tableName, List<YourDataModel> dataL
 
 </configuration>
 
+
+
+<configuration>
+
+    <property name="LOG_DIR" value="${log.dir:-logs}" />
+
+    <!-- Insert Job Logger -->
+    <appender name="INSERT_FILE" class="ch.qos.logback.core.FileAppender">
+        <file>${LOG_DIR}/insert-errors.log</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Read Job Logger -->
+    <appender name="READ_FILE" class="ch.qos.logback.core.FileAppender">
+        <file>${LOG_DIR}/read-errors.log</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Insert Job Logger Setup -->
+    <logger name="insert-job" level="ERROR" additivity="false">
+        <appender-ref ref="INSERT_FILE"/>
+    </logger>
+
+    <!-- Read Job Logger Setup -->
+    <logger name="read-job" level="ERROR" additivity="false">
+        <appender-ref ref="READ_FILE"/>
+    </logger>
+
+    <!-- Root logger (optional) -->
+    <root level="INFO">
+        <!-- You can add a general appender if needed -->
+    </root>
+
+</configuration>
