@@ -699,3 +699,42 @@ public class dfUkrbRepeatUseDailyNormTest {
         assertTrue(outFile.length() > 0);
     }
 }
+
+
+import org.apache.beam.sdk.testing.TestPipeline;
+import org.apache.beam.sdk.testing.PAssert;
+import org.apache.beam.sdk.transforms.Create;
+import org.apache.beam.sdk.values.PCollection;
+import org.junit.Rule;
+import org.junit.Test;
+
+import java.util.Arrays;
+import java.util.List;
+
+public class dfUkrbRepeatUseDailyNormTest {
+
+    @Rule
+    public final transient TestPipeline pipeline = TestPipeline.create();
+
+    @Test
+    public void testPipelineExecutionWithMockData() {
+        // Mock input
+        List<String> inputLines = Arrays.asList(
+            "HEADER_LINE",
+            "BODY_RECORD_1",
+            "TRAILER_LINE"
+        );
+
+        PCollection<String> input = pipeline.apply("Read Mock Input", Create.of(inputLines));
+
+        // Apply a basic transformation for test (simulate part of real logic)
+        PCollection<String> headers = input.apply("Filter Headers", Filter.by(line -> line.startsWith("HEADER")));
+        PCollection<String> trailers = input.apply("Filter Trailers", Filter.by(line -> line.startsWith("TRAILER")));
+
+        // Verify filtered results
+        PAssert.that(headers).containsInAnyOrder("HEADER_LINE");
+        PAssert.that(trailers).containsInAnyOrder("TRAILER_LINE");
+
+        pipeline.run().waitUntilFinish();
+    }
+}
