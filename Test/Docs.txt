@@ -563,3 +563,139 @@ public static void truncateAndInsert(String tableName, List<YourDataModel> dataL
     </root>
 
 </configuration>
+
+
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.testing.PAssert;
+import org.apache.beam.sdk.testing.TestPipeline;
+import org.apache.beam.sdk.transforms.Create;
+import org.apache.beam.sdk.transforms.Filter;
+import org.apache.beam.sdk.transforms.MapElements;
+import org.apache.beam.sdk.values.PCollection;
+import org.apache.beam.sdk.values.TypeDescriptor;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.File;
+import java.io.FileWriter;
+import java.util.Arrays;
+import java.util.List;
+
+import static org.junit.Assert.*;
+import static org.mockito.Mockito.*;
+
+public class dfUkrbRepeatUseDailyNormTest {
+
+    @Rule
+    public final transient TestPipeline pipeline = TestPipeline.create();
+
+    @Rule
+    public TemporaryFolder tempFolder = new TemporaryFolder();
+
+    private List<String> inputLines;
+
+    @Before
+    public void setup() {
+        inputLines = Arrays.asList(
+            "HEADER line1",
+            "BODY line2",
+            "TRAILER line3"
+        );
+    }
+
+    @Test
+    public void testPipelineHeaderParsing() {
+        PCollection<String> input = pipeline.apply(Create.of(inputLines));
+
+        PCollection<String> headers = input.apply("Extract Headers", Filter.by(line -> line.startsWith("HEADER")));
+
+        PAssert.that(headers).containsInAnyOrder("HEADER line1");
+        pipeline.run().waitUntilFinish();
+    }
+
+    @Test
+    public void testPipelineBodyParsing() {
+        PCollection<String> input = pipeline.apply(Create.of(inputLines));
+
+        PCollection<String> body = input.apply("Extract Body", Filter.by(line -> line.startsWith("BODY")));
+
+        PAssert.that(body).containsInAnyOrder("BODY line2");
+        pipeline.run().waitUntilFinish();
+    }
+
+    @Test
+    public void testPipelineTrailerParsing() {
+        PCollection<String> input = pipeline.apply(Create.of(inputLines));
+
+        PCollection<String> trailer = input.apply("Extract Trailer", Filter.by(line -> line.startsWith("TRAILER")));
+
+        PAssert.that(trailer).containsInAnyOrder("TRAILER line3");
+        pipeline.run().waitUntilFinish();
+    }
+
+    @Test
+    public void testMapToJobStatusSuccess() {
+        Pipeline testPipe = TestPipeline.create();
+        PCollection<JobStatus> jobStatus = PojoMapper.mapToJobStatus(testPipe, "testJob");
+
+        PAssert.thatSingleton(jobStatus).satisfies(js -> {
+            assertNotNull(js.getKey());
+            assertNotNull(js.getMarket());
+            return null;
+        });
+
+        testPipe.run().waitUntilFinish();
+    }
+
+    @Test
+    public void testInitializeJob_noExceptionThrown() {
+        DatabaseOperationsUtility dbUtil = mock(DatabaseOperationsUtility.class);
+
+        try {
+            doNothing().when(dbUtil).initializeJob(any(), any(), any());
+            dbUtil.initializeJob(mock(Pipeline.class), "job", "log");
+            verify(dbUtil, times(1)).initializeJob(any(), any(), any());
+        } catch (Exception e) {
+            fail("Initialization threw an exception");
+        }
+    }
+
+    @Test
+    public void testMainMethodSuccessfulRun() {
+        try {
+            dfUkrbRepeatUseDailyNorm.main(new String[]{});
+        } catch (Exception e) {
+            fail("Main should not throw exception: " + e.getMessage());
+        }
+    }
+
+    @Test
+    public void testMainMethodWithFailure_shouldLogAndExit() {
+        // Simulate runtime failure by setting a condition in code (e.g. System property or mock)
+        System.setProperty("FAIL_MAIN", "true");
+
+        try {
+            dfUkrbRepeatUseDailyNorm.main(new String[]{});
+            fail("Expected an exception to be thrown");
+        } catch (Exception e) {
+            assertTrue(e.getMessage().contains("Runtime Error"));
+        } finally {
+            System.clearProperty("FAIL_MAIN");
+        }
+    }
+
+    @Test
+    public void testFileOutputCreation() throws Exception {
+        File outFile = tempFolder.newFile("output.txt");
+
+        FileWriter writer = new FileWriter(outFile);
+        writer.write("SAMPLE OUTPUT");
+        writer.close();
+
+        assertTrue(outFile.exists());
+        assertTrue(outFile.length() > 0);
+    }
+}
