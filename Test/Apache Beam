@@ -1,1 +1,64 @@
 
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.testing.PAssert;
+import org.apache.beam.sdk.testing.TestPipeline;
+import org.apache.beam.sdk.values.PCollection;
+import org.junit.Rule;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
+
+import java.io.File;
+import java.io.FileWriter;
+import java.nio.file.Path;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+public class RepeatUseDailyNormTest {
+
+    @TempDir
+    Path tempDir;
+
+    // Optional if you want to use @Rule style (JUnit 4 compatibility)
+    @Rule
+    public final transient TestPipeline testPipeline = TestPipeline.create();
+
+    @Test
+    void testCreatePipelineReadsFileWithTestPipeline() throws Exception {
+        // Step 1: Prepare test input file
+        File testFile = tempDir.resolve("test-input.txt").toFile();
+        try (FileWriter writer = new FileWriter(testFile)) {
+            writer.write("first\nsecond\nthird\n");
+        }
+
+        // Step 2: Mock the LogErrorFileUtility
+        LogErrorFileUtility mockLogUtil = Mockito.mock(LogErrorFileUtility.class);
+
+        // Step 3: Use TestPipeline directly
+        Pipeline pipeline = TestPipeline.create();
+
+        // Step 4: Apply read
+        PCollection<String> output = pipeline.apply(
+                "READ_HOTORU_FILE", TextIO.read().from(testFile.getAbsolutePath())
+        );
+
+        // Step 5: Assert
+        PAssert.that(output).containsInAnyOrder("first", "second", "third");
+
+        pipeline.run().waitUntilFinish();
+    }
+
+    @Test
+    void testMainRunsWithoutErrors() {
+        assertDoesNotThrow(() -> Test.main(new String[]{}));
+    }
+
+    @Test
+    void testCreatePipelineReturnsNonNullPipeline() {
+        LogErrorFileUtility mockLogUtil = Mockito.mock(LogErrorFileUtility.class);
+        Pipeline pipeline = Test.createPipeline(mockLogUtil, "/dummy/path.txt");
+        assertNotNull(pipeline);
+    }
+}
