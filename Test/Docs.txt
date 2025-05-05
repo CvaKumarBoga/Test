@@ -738,3 +738,70 @@ public class dfUkrbRepeatUseDailyNormTest {
         pipeline.run().waitUntilFinish();
     }
 }
+
+
+
+import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericRecord;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.junit.jupiter.api.Test;
+import org.apache.parquet.avro.AvroParquetReader;
+import org.apache.parquet.avro.AvroParquetWriter;
+import org.apache.parquet.hadoop.ParquetReader;
+import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.hadoop.metadata.CompressionCodecName;
+import org.apache.parquet.hadoop.util.HadoopOutputFile;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+public class ParquetWriteReadTest {
+
+    @Test
+    public void testWriteAndReadParquetFile() throws IOException {
+        // Define Avro schema
+        String avroSchema = "{\"type\":\"record\",\"name\":\"TestRecord\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"name\",\"type\":\"string\"}]}";
+        Schema schema = new Schema.Parser().parse(avroSchema);
+
+        // Prepare test data
+        List<GenericRecord> data = new ArrayList<>();
+        GenericRecord record1 = new GenericData.Record(schema);
+        record1.put("id", 1);
+        record1.put("name", "Record 1");
+        data.add(record1);
+
+        GenericRecord record2 = new GenericData.Record(schema);
+        record2.put("id", 2);
+        record2.put("name", "Record 2");
+        data.add(record2);
+
+        // Write data to Parquet file
+        File testFile = new File("test.parquet");
+        Path path = new Path(testFile.getAbsolutePath());
+       
+        ParquetWriter<GenericRecord> writer = AvroParquetWriter.<GenericRecord>builder(HadoopOutputFile.fromPath(path, new Configuration()))
+                .withSchema(schema)
+                .withCompressionCodec(CompressionCodecName.SNAPPY)
+                .build();
+        for (GenericRecord record : data) {
+            writer.write(record);
+        }
+        writer.close();
+
+        // Read data from Parquet file
+        ParquetReader<GenericRecord> reader = AvroParquetReader.<GenericRecord>builder(path).build();
+        GenericRecord readRecord1 = reader.read();
+        GenericRecord readRecord2 = reader.read();
+        reader.close();
+
+        // Assert data
+        assertEquals(record1, readRecord1);
+        assertEquals(record2, readRecord2);
+    }
+}
