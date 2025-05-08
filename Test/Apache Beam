@@ -127,4 +127,100 @@ public class FileReaderPipelineTest {
 }
 
 
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.values.TupleTag;
+import org.apache.beam.sdk.values.KV;
+import org.apache.beam.sdk.values.Row;
+import org.apache.beam.sdk.transforms.DoFnTester;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import java.util.HashMap;
+import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.*;
+
+public class RepeatUseNormalizationConversionTest {
+
+    private RepeatUseNormalizationConversion fn;
+    private TupleTag<String> logTag;
+    private TupleTag<Row> validTag;
+
+    @BeforeEach
+    public void setup() {
+        logTag = new TupleTag<>();
+        validTag = new TupleTag<>();
+        fn = new RepeatUseNormalizationConversion(logTag, validTag);
+    }
+
+    @Test
+    public void testValidInput() throws Exception {
+        Map<String, Object> values = new HashMap<>();
+        values.put("HOTROU-ACCOUNT-NBR", "123456789");
+        values.put("HOTROU-REPT-USE-IND-1", "Y");
+        values.put("HOTROU-REPT-USE-DATE-1", "20230501");
+        values.put("HOTROU-REPT-USE-IND-2", "N");
+        values.put("HOTROU-REPT-USE-DATE-2", "20230502");
+        values.put("HOTROU-REPT-USE-IND-3", "Y");
+        values.put("HOTROU-REPT-USE-DATE-3", "20230503");
+        values.put("HOTROU-REPT-USE-HISTORY", "Some history");
+
+        Row inputRow = Row.withSchema(RepeatUseSchema.ROW_SCHEMA).addValues(
+                values.get("HOTROU-ACCOUNT-NBR"),
+                values.get("HOTROU-REPT-USE-IND-1"),
+                values.get("HOTROU-REPT-USE-DATE-1"),
+                values.get("HOTROU-REPT-USE-IND-2"),
+                values.get("HOTROU-REPT-USE-DATE-2"),
+                values.get("HOTROU-REPT-USE-IND-3"),
+                values.get("HOTROU-REPT-USE-DATE-3"),
+                values.get("HOTROU-REPT-USE-HISTORY")
+        ).build();
+
+        DoFnTester<Row, Row> tester = DoFnTester.of(fn);
+        tester.processElement(inputRow);
+
+        assertEquals(1, tester.peekOutput(validTag).size());
+        assertTrue(tester.peekOutput(logTag).isEmpty());
+    }
+
+    @Test
+    public void testInvalidAccountNumber() {
+        Map<String, Object> values = new HashMap<>();
+        values.put("HOTROU-ACCOUNT-NBR", "");
+        values.put("HOTROU-REPT-USE-IND-1", "Y");
+        values.put("HOTROU-REPT-USE-DATE-1", "20230501");
+
+        Row inputRow = Row.withSchema(RepeatUseSchema.ROW_SCHEMA).addValues(
+                values.get("HOTROU-ACCOUNT-NBR"),
+                values.get("HOTROU-REPT-USE-IND-1"),
+                values.get("HOTROU-REPT-USE-DATE-1"),
+                "", "", "", "", ""
+        ).build();
+
+        DoFnTester<Row, Row> tester = DoFnTester.of(fn);
+        tester.processElement(inputRow);
+
+        assertEquals(0, tester.peekOutput(validTag).size());
+        assertEquals(1, tester.peekOutput(logTag).size());
+    }
+
+    @Test
+    public void testInvalidDateFormat() {
+        Map<String, Object> values = new HashMap<>();
+        values.put("HOTROU-ACCOUNT-NBR", "987654321");
+        values.put("HOTROU-REPT-USE-IND-1", "Y");
+        values.put("HOTROU-REPT-USE-DATE-1", "invalid-date");
+
+        Row inputRow = Row.withSchema(RepeatUseSchema.ROW_SCHEMA).addValues(
+                values.get("HOTROU-ACCOUNT-NBR"),
+                values.get("HOTROU-REPT-USE-IND-1"),
+                values.get("HOTROU-REPT-USE-DATE-1"),
+                "", "", "", "", ""
+        ).build();
+
+        DoFnTester<Row, Row> tester = DoFnTester.of(fn);
+        tester.processElement(inputRow);
+
+        assertEquals(1, tester.peekOutput(validTag).size()); // with DEFAULT_DATE fallback
+        assertFalse(tester.peekOutput(logTag).isEmpty());
+    }
+}
