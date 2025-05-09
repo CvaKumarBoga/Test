@@ -272,3 +272,49 @@ public class YourMainClassTest {
         }
     }
 }
+
+import static org.mockito.Mockito.*;
+
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.options.PipelineOptionsFactory;
+import org.apache.beam.sdk.testing.TestPipeline;
+import org.junit.Rule;
+import org.junit.Test;
+
+public class YourMainClassTest {
+
+    @Rule
+    public final TestPipeline testPipeline = TestPipeline.create();
+
+    @Test
+    public void testMainMethod() {
+        try (
+            MockedStatic<PipelineOptionsFactory> factoryMock = mockStatic(PipelineOptionsFactory.class);
+            MockedStatic<Pipeline> pipelineMock = mockStatic(Pipeline.class)
+        ) {
+            CustomPipelineOptions mockOptions = mock(CustomPipelineOptions.class);
+            Pipeline mockPipeline = mock(Pipeline.class);
+
+            // Set up mock behavior
+            factoryMock.when(PipelineOptionsFactory::create).thenReturn(mockOptions);
+            when(mockOptions.as(CustomPipelineOptions.class)).thenReturn(mockOptions);
+
+            when(mockOptions.getInputFileName()).thenReturn("mock_input");
+            when(mockOptions.getGcsInputFileBasePath()).thenReturn("mock_base_path");
+            when(mockOptions.getOutputFileBasePath()).thenReturn("mock_output_path");
+            when(mockOptions.getOutputFileName()).thenReturn("mock_file_name");
+
+            pipelineMock.when(() -> Pipeline.create(mockOptions)).thenReturn(mockPipeline);
+            when(mockPipeline.run()).thenReturn(testPipeline.run());
+
+            // Run the main method
+            YourMainClass.main(new String[]{});
+
+            // Verify that waitUntilFinish was called
+            verify(mockPipeline.run()).waitUntilFinish();
+        } catch (Exception e) {
+            throw new AssertionError("Test failed", e);
+        }
+    }
+}
+
