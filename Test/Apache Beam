@@ -1,3 +1,47 @@
+// Step 5: Truncate the repeat_usage table
+PCollection<String> truncateResults = pipeline
+    .apply("Truncate Table", DatabaseOperationUtility.truncateTable(
+        QueryFieldUtils.QUERY_TRUNCATE_REPEAT_USAGE.getQuery()));
+
+// Step 6: Write RepeatUse objects to the database after truncate completes
+PCollection<String> dbWritingResults = repeatUseObj
+    .apply("Wait for Truncate", Wait.on(truncateResults))
+    .apply("Write RepeatUse to DB", DatabaseOperationUtility.writeToDatabaseWithStatus(
+        QueryFieldUtils.REPEAT_USE_INSERT.getQuery(), RepeatUse.class));
+
+// Step 7: Update the customer_account table after write completes
+PCollection<String> customerUpdateResults = dbWritingResults
+    .apply("Update Customer Table", ParDo.of(new DoFn<String, String>() {
+        @ProcessElement
+        public void processElement(ProcessContext context) {
+            DatabaseOperationUtility.updateTable(
+                QueryFieldUtils.QUERY_UPDATE_CUSTOMER_ACCOUNT.getQuery());
+            context.output("Customer Table Updated");
+        }
+    }));
+
+// Step 8: Get inserted record count from DB after customer update
+PCollectionView<Long> processedCountView = customerUpdateResults
+    .apply("Fetch Inserted Record Count", ParDo.of(new DoFn<String, Long>() {
+        @ProcessElement
+        public void processElement(ProcessContext context) {
+            long count = DatabaseOperationUtility.getInsertedRecordsCount(
+                QueryFieldUtils.REPEAT_USE_COUNT.getQuery());
+            context.output(count);
+        }
+    })).apply(View.asSingleton());
+
+// Step 9: Update job status only after record count is retrieved
+pipeline.apply("Update Job Status", ParDo.of(new DoFn<Void, Void>() {
+    @ProcessElement
+    public void processElement(ProcessContext c) {
+        long count = c.sideInput(processedCountView);
+        DatabaseOperationUtility.updateJobStatus(
+            JobConfig.REPEAT_USE_DAILY_PROC_JOB, "sourceCount", count, USRConstants.COMPLETED);
+    }
+}).withSideInputs(processedCountView));
+
+
 
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.io.TextIO;
