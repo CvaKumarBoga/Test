@@ -1,0 +1,68 @@
+Write a big query as per below description
+
+I have a transaction table fields account number and amount column and PTP agreement table fields account number and remaining amount and PTP id and PTP agreement table fields PTP id and account number and total amount so based on transaction amount need to update amount column in PTP aggreement table and PTP assignment table example 3000 transaction amount and if transaction is > PTP agreement table amount (1500)and PTP arrangement table PTP amount column (1500) need to subtract and remaining 1500 amount against substrate from next record so similarly if 2 transaction records for same account number need to subtract all two transactions amount from all PTP amount from agreement table and assignment table
+
+-- Step 1: Sum total transaction amounts per account
+WITH transaction_summary AS (
+  SELECT
+    account_number,
+    SUM(amount) AS total_transaction_amount
+  FROM
+    transaction_table
+  GROUP BY
+    account_number
+),
+
+-- Step 2: Compute how much to deduct from ptp_agreement_table
+ptp_agreement_update AS (
+  SELECT
+    p.ptp_id,
+    p.account_number,
+    p.remaining_amount,
+    LEAST(p.remaining_amount, t.total_transaction_amount) AS amount_to_deduct,
+    -- remaining transaction amount after deduction
+    GREATEST(t.total_transaction_amount - p.remaining_amount, 0) AS remaining_txn_after_agreement
+  FROM
+    ptp_agreement_table p
+  JOIN
+    transaction_summary t
+  ON
+    p.account_number = t.account_number
+),
+
+-- Step 3: Compute how much to deduct from ptp_assignment_table using the remaining amount
+ptp_assignment_update AS (
+  SELECT
+    pa.ptp_id,
+    pa.account_number,
+    pa.total_amount,
+    LEAST(pa.total_amount, a.remaining_txn_after_agreement) AS amount_to_deduct
+  FROM
+    ptp_assignment_table pa
+  JOIN
+    ptp_agreement_update a
+  ON
+    pa.ptp_id = a.ptp_id
+)
+
+-- Final Select to show the updates
+SELECT
+  'ptp_agreement_table' AS table_name,
+  ptp_id,
+  account_number,
+  remaining_amount AS original_amount,
+  remaining_amount - amount_to_deduct AS updated_amount
+FROM
+  ptp_agreement_update
+
+UNION ALL
+
+SELECT
+  'ptp_assignment_table' AS table_name,
+  ptp_id,
+  account_number,
+  total_amount AS original_amount,
+  total_amount - amount_to_deduct AS updated_amount
+FROM
+  ptp_assignment_update;
+
