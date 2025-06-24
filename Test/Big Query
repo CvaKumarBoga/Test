@@ -66,3 +66,165 @@ SELECT
 FROM
   ptp_assignment_update;
 
+
+
+
+
+-- Input: Specific account numbers
+WITH transaction_data AS (
+  SELECT
+    account_number,
+    SUM(transaction_amount) AS total_transaction_amount
+  FROM
+    transaction
+  WHERE
+    account_number IN ('000004005205201678', '000004005205201679')
+  GROUP BY
+    account_number
+),
+
+arrangement_base AS (
+  SELECT
+    p.account_number,
+    p.ptp_group_id,
+    p.ptp_id,
+    p.term_counter,
+    p.promise_balance,
+    p.total_payment_amount,
+    p.status AS ptp_status,
+    p.term,
+    p.remaining_ptp_term_balance,
+    t.total_transaction_amount AS total_txn_amt,
+    t.total_transaction_amount AS txn_amt_remaining
+  FROM
+    promise_to_pay_arrangement p
+  JOIN
+    transaction_data t
+  ON
+    p.account_number = t.account_number
+),
+
+RECURSIVE arrangement_recursive AS (
+  -- Anchor: start with lowest term_counter (1)
+  SELECT
+    account_number,
+    ptp_group_id,
+    ptp_id,
+    term_counter,
+    promise_balance,
+    total_payment_amount,
+    ptp_status,
+    term,
+    remaining_ptp_term_balance,
+    total_txn_amt,
+    txn_amt_remaining,
+    -- Amount applied in this iteration
+    CASE
+      WHEN txn_amt_remaining >= remaining_ptp_term_balance THEN remaining_ptp_term_balance
+      ELSE txn_amt_remaining
+    END AS payment_applied
+  FROM
+    arrangement_base
+  WHERE
+    term_counter = 1
+
+  UNION ALL
+
+  -- Recursive step: process the next term_counter + 1
+  SELECT
+    b.account_number,
+    b.ptp_group_id,
+    b.ptp_id,
+    b.term_counter,
+    b.promise_balance,
+    b.total_payment_amount,
+    b.ptp_status,
+    b.term,
+    b.remaining_ptp_term_balance,
+    r.total_txn_amt,
+    
+    -- Update remaining txn amount
+    CASE
+      WHEN r.txn_amt_remaining >= r.remaining_ptp_term_balance THEN r.txn_amt_remaining - r.remaining_ptp_term_balance
+      ELSE 0
+    END AS txn_amt_remaining,
+
+    -- Compute this record’s payment
+    CASE
+      WHEN r.txn_amt_remaining >= r.remaining_ptp_term_balance THEN b.remaining_ptp_term_balance
+      ELSE r.txn_amt_remaining
+    END AS payment_applied
+
+  FROM
+    arrangement_base b
+  JOIN
+    arrangement_recursive r
+  ON
+    b.account_number = r.account_number
+    AND b.term_counter = r.term_counter + 1
+)
+
+-- Final: Expected Arrangement and Agreement Result
+, arrangement_result AS (
+  SELECT
+    account_number,
+    ptp_group_id,
+    ptp_id,
+    term_counter,
+    remaining_ptp_term_balance AS original_balance,
+    payment_applied,
+    remaining_ptp_term_balance - payment_applied AS expected_remaining_balance,
+    CASE
+      WHEN remaining_ptp_term_balance - payment_applied = 0 THEN 'K'  -- Fully paid
+      ELSE ptp_status
+    END AS expected_ptp_status
+  FROM
+    arrangement_recursive
+),
+
+agreement_result AS (
+  -- Aggregate arrangement data to get agreement-level (Promise Balance) result
+  SELECT
+    a.account_number,
+    SUM(a.remaining_ptp_term_balance) AS original_promise_balance,
+    SUM(a.payment_applied) AS total_payment_applied,
+    SUM(a.remaining_ptp_term_balance - a.payment_applied) AS expected_promise_balance,
+    CASE
+      WHEN SUM(a.remaining_ptp_term_balance - a.payment_applied) = 0 THEN 'K'
+      ELSE MAX(p.ptp_status)
+    END AS expected_agreement_status
+  FROM
+    arrangement_recursive a
+  JOIN
+    promise_to_pay_arrangement p
+  ON
+    a.account_number = p.account_number
+    AND a.ptp_group_id = p.ptp_group_id
+    AND a.term_counter = p.term_counter
+  GROUP BY
+    a.account_number
+)
+
+-- Final SELECT combining both arrangement and agreement expected results
+SELECT
+  ar.account_number,
+  ar.ptp_group_id,
+  ar.ptp_id,
+  ar.term_counter,
+  ar.original_balance,
+  ar.payment_applied,
+  ar.expected_remaining_balance,
+  ar.expected_ptp_status,
+  ag.original_promise_balance,
+  ag.total_payment_applied,
+  ag.expected_promise_balance,
+  ag.expected_agreement_status
+FROM
+  arrangement_result ar
+JOIN
+  agreement_result ag
+ON
+  ar.account_number = ag.account_number
+ORDER BY
+  ar.account_number,
+  ar.term_counter;
