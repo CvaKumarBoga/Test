@@ -228,3 +228,153 @@ ON
 ORDER BY
   ar.account_number,
   ar.term_counter;
+
+
+
+
+-- Step 1: Join all 3 tables
+WITH transaction_data AS (
+  SELECT DISTINCT
+    t.account_number,
+    t.transaction_amount,
+    ppa.ptp_id,
+    ppa.ptp_group_id,
+    ppa.promise_balance,
+    ppa.total_payment_amount,
+    ppa.status AS agreement_status,
+    ppa.term AS agreement_term,
+    pta.term_counter,
+    pta.remaining_ptp_term_balance,
+    pta.payment_amount,
+    pta.status AS arrangement_status,
+    ROW_NUMBER() OVER (PARTITION BY t.account_number ORDER BY t.transaction_date) AS transaction_order
+  FROM `hsbc-12208313-collukdev-dev.CTA_C48_UK_MIG_TEMP.transaction` t
+  JOIN `hsbc-12208313-collukdev-dev.CTA_C48_UK_MIG_TEMP.promise_to_pay_agreement` ppa
+    ON t.account_number = ppa.account_number
+  JOIN `hsbc-12208313-collukdev-dev.CTA_C48_UK_MIG_TEMP.promise_to_pay_arrangement` pta
+    ON ppa.ptp_id = pta.ptp_id
+   AND ppa.account_number = pta.account_number
+  WHERE t.account_number IN (
+    '0000040052052014076',
+    '0000040052052014077',
+    '0000040052052014078'
+  )
+),
+
+-- Step 2: Order transactions and arrangements
+ordered_transactions AS (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY account_number ORDER BY transaction_order) AS txn_seq
+  FROM transaction_data
+),
+
+ordered_arrangements AS (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY account_number, ptp_id ORDER BY term_counter) AS term_seq
+  FROM transaction_data
+),
+
+-- Step 3: Recursive logic to apply each transaction to terms
+RECURSIVE applied_payments AS (
+  -- Anchor: apply first transaction to first term
+  SELECT
+    ot.account_number,
+    ot.ptp_id,
+    ot.ptp_group_id,
+    ot.txn_seq,
+    ot.term_seq,
+    ot.transaction_amount AS txn_remaining,
+    ot.remaining_ptp_term_balance,
+    ot.term_counter,
+    CASE
+      WHEN ot.transaction_amount >= ot.remaining_ptp_term_balance THEN ot.remaining_ptp_term_balance
+      ELSE ot.transaction_amount
+    END AS applied_amount
+  FROM ordered_transactions ot
+  WHERE term_seq = 1 AND txn_seq = 1
+
+  UNION ALL
+
+  -- Recursive: apply remainder of transaction to next term or move to next transaction
+  SELECT
+    ap.account_number,
+    ap.ptp_id,
+    ap.ptp_group_id,
+
+    -- If current term fully paid and remainder exists, stay on txn_seq and go to next term
+    CASE
+      WHEN ap.txn_remaining - ap.applied_amount > 0 AND oa.term_seq > ap.term_seq THEN ap.txn_seq
+      ELSE ap.txn_seq + 1
+    END AS txn_seq,
+
+    oa.term_seq,
+    CASE
+      WHEN ap.txn_remaining - ap.applied_amount > 0 THEN ap.txn_remaining - ap.applied_amount
+      ELSE ot.transaction_amount
+    END AS txn_remaining,
+
+    oa.remaining_ptp_term_balance,
+    oa.term_counter,
+
+    CASE
+      WHEN ap.txn_remaining - ap.applied_amount >= oa.remaining_ptp_term_balance THEN oa.remaining_ptp_term_balance
+      WHEN ap.txn_remaining - ap.applied_amount > 0 THEN ap.txn_remaining - ap.applied_amount
+      ELSE ot.transaction_amount
+    END AS applied_amount
+
+  FROM applied_payments ap
+  JOIN ordered_arrangements oa
+    ON ap.account_number = oa.account_number
+    AND ap.ptp_id = oa.ptp_id
+    AND oa.term_seq = ap.term_seq + 1
+
+  JOIN ordered_transactions ot
+    ON ap.account_number = ot.account_number
+    AND ap.txn_seq + 1 = ot.txn_seq
+  WHERE ap.txn_remaining > 0
+)
+
+-- Step 4: Final aggregation per term and agreement
+, term_results AS (
+  SELECT
+    account_number,
+    ptp_id,
+    ptp_group_id,
+    term_counter,
+    SUM(applied_amount) AS total_paid,
+    MIN(remaining_ptp_term_balance) AS original_balance,
+    MIN(remaining_ptp_term_balance) - SUM(applied_amount) AS expected_remaining_balance,
+    CASE
+      WHEN MIN(remaining_ptp_term_balance) - SUM(applied_amount) = 0 THEN 'K'
+      ELSE 'A'
+    END AS expected_status
+  FROM applied_payments
+  GROUP BY account_number, ptp_id, ptp_group_id, term_counter
+),
+
+agreement_summary AS (
+  SELECT
+    account_number,
+    ptp_id,
+    ptp_group_id,
+    SUM(original_balance) AS original_promise_balance,
+    SUM(total_paid) AS total_applied,
+    SUM(original_balance - total_paid) AS expected_promise_balance,
+    CASE
+      WHEN SUM(original_balance - total_paid) = 0 THEN 'K'
+      ELSE 'A'
+    END AS expected_agreement_status
+  FROM term_results
+  GROUP BY account_number, ptp_id, ptp_group_id
+)
+
+-- Step 5: Output
+SELECT
+  t.*,
+  a.original_promise_balance,
+  a.total_applied AS agreement_total_paid,
+  a.expected_promise_balance,
+  a.expected_agreement_status
+FROM term_results t
+JOIN agreement_summary a
+  ON t.account_number = a.account_number
+  AND t.ptp_id = a.ptp_id
+ORDER BY t.account_number, t.term_counter;
