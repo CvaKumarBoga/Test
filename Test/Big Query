@@ -180,3 +180,193 @@ SELECT
   new_total_payment,
   new_promise_balance
 FROM updated_ptp_agreement;
+
+
+
+
+-- Step 1: Include only payment transactions
+WITH ordered_txns AS (
+  SELECT 
+    t.account_number,
+    t.transaction_amount,
+    t.transaction_date,
+    ROW_NUMBER() OVER (
+      PARTITION BY t.account_number, a.ptp_group_id, a.ptp_id 
+      ORDER BY t.transaction_date
+    ) AS txn_order
+  FROM `transaction` t
+  JOIN `promise_to_pay_agreement` a
+    ON t.account_number = a.account_number
+  WHERE t.transaction_type = 'PAYMENT'
+),
+
+-- Step 2: Order arrangement terms per agreement
+ordered_ptp AS (
+  SELECT 
+    account_number,
+    ptp_group_id,
+    ptp_id,
+    term_counter,
+    payment_amount,
+    remaining_ptp_term_balance,
+    ROW_NUMBER() OVER (
+      PARTITION BY account_number, ptp_group_id, ptp_id
+      ORDER BY term_counter
+    ) AS term_order
+  FROM `promise_to_pay_arrangement`
+),
+
+-- Step 3: Cross join first terms and first transactions
+txn_ptp_init AS (
+  SELECT
+    tx.account_number,
+    pt.account_number      AS pt_account,
+    tx.transaction_amount,
+    tx.txn_order,
+    pt.ptp_group_id,
+    pt.ptp_id,
+    pt.term_order,
+    pt.term_counter,
+    pt.payment_amount,
+    pt.remaining_ptp_term_balance
+  FROM ordered_txns tx
+  JOIN ordered_ptp pt
+    ON tx.account_number = pt.account_number
+       AND pt.term_order = 1
+       AND tx.txn_order = 1
+),
+
+-- Step 4: Recursive payment logic
+recursive_payment AS (
+  SELECT 
+    account_number,
+    ptp_group_id,
+    ptp_id,
+    txn_order,
+    term_order,
+    term_counter,
+    remaining_ptp_term_balance,
+    transaction_amount AS initial_txn_amount,
+    LEAST(transaction_amount, remaining_ptp_term_balance) AS paid_this_step,
+    transaction_amount - LEAST(transaction_amount, remaining_ptp_term_balance) AS remaining_txn_amount,
+    remaining_ptp_term_balance - LEAST(transaction_amount, remaining_ptp_term_balance) AS remaining_balance_after_payment
+  FROM txn_ptp_init
+
+  UNION ALL
+
+  SELECT 
+    r.account_number,
+    r.ptp_group_id,
+    r.ptp_id,
+    r.txn_order,
+    pt.term_order,
+    pt.term_counter,
+    pt.remaining_ptp_term_balance,
+    r.remaining_txn_amount AS initial_txn_amount,
+    LEAST(r.remaining_txn_amount, pt.remaining_ptp_term_balance),
+    r.remaining_txn_amount - LEAST(r.remaining_txn_amount, pt.remaining_ptp_term_balance),
+    pt.remaining_ptp_term_balance - LEAST(r.remaining_txn_amount, pt.remaining_ptp_term_balance)
+  FROM recursive_payment r
+  JOIN ordered_ptp pt
+    ON r.account_number = pt.account_number
+       AND r.ptp_group_id = pt.ptp_group_id
+       AND r.ptp_id = pt.ptp_id
+       AND pt.term_order = r.term_order + 1
+  WHERE r.remaining_txn_amount > 0
+),
+
+-- Step 5: Summarize payments per term
+term_payment_summary AS (
+  SELECT 
+    account_number,
+    ptp_group_id,
+    ptp_id,
+    term_counter,
+    SUM(paid_this_step) AS paid_to_term
+  FROM recursive_payment
+  GROUP BY account_number, ptp_group_id, ptp_id, term_counter
+),
+
+-- Step 6: Update arrangement table
+updated_ptp_arrangement AS (
+  SELECT 
+    p.account_number,
+    p.ptp_group_id,
+    p.ptp_id,
+    p.term_counter,
+    p.payment_amount,
+    p.remaining_ptp_term_balance,
+    COALESCE(s.paid_to_term, 0) AS paid,
+    p.remaining_ptp_term_balance - COALESCE(s.paid_to_term, 0) AS new_remaining_balance
+  FROM `promise_to_pay_arrangement` p
+  LEFT JOIN term_payment_summary s
+    ON p.account_number = s.account_number
+       AND p.ptp_group_id = s.ptp_group_id
+       AND p.ptp_id = s.ptp_id
+       AND p.term_counter = s.term_counter
+),
+
+-- Step 7: Summarize total paid per agreement
+agreement_payment_summary AS (
+  SELECT 
+    account_number,
+    ptp_group_id,
+    ptp_id,
+    SUM(paid_this_step) AS total_paid
+  FROM recursive_payment
+  GROUP BY account_number, ptp_group_id, ptp_id
+),
+
+-- Step 8: Update agreement table
+updated_ptp_agreement AS (
+  SELECT 
+    a.account_number,
+    a.ptp_group_id,
+    a.ptp_id,
+    a.promise_balance,
+    a.total_payment_amount,
+    COALESCE(s.total_paid, 0) AS paid_now,
+    a.total_payment_amount + COALESCE(s.total_paid, 0) AS new_total_payment,
+    a.promise_balance - COALESCE(s.total_paid, 0) AS new_promise_balance
+  FROM `promise_to_pay_agreement` a
+  LEFT JOIN agreement_payment_summary s
+    ON a.account_number = s.account_number
+       AND a.ptp_group_id = s.ptp_group_id
+       AND a.ptp_id = s.ptp_id
+)
+
+-- Final output of updates
+SELECT
+  'TERM_UPDATE' AS record_type,
+  account_number,
+  ptp_group_id,
+  ptp_id,
+  term_counter,
+  payment_amount,
+  remaining_ptp_term_balance,
+  paid,
+  new_remaining_balance,
+  NULL AS promise_balance,
+  NULL AS total_payment_amount,
+  NULL AS new_total_payment,
+  NULL AS new_promise_balance
+FROM updated_ptp_arrangement
+
+UNION ALL
+
+SELECT
+  'AGREEMENT_UPDATE' AS record_type,
+  account_number,
+  ptp_group_id,
+  ptp_id,
+  NULL AS term_counter,
+  NULL AS payment_amount,
+  NULL AS remaining_ptp_term_balance,
+  paid_now AS paid,
+  NULL AS new_remaining_balance,
+  promise_balance,
+  total_payment_amount,
+  new_total_payment,
+  new_promise_balance
+FROM updated_ptp_agreement
+ORDER BY account_number, ptp_group_id, ptp_id, record_type;
