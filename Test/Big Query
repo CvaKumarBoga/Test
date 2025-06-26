@@ -370,3 +370,65 @@ SELECT
   new_promise_balance
 FROM updated_ptp_agreement
 ORDER BY account_number, ptp_group_id, ptp_id, record_type;
+
+
+
+
+-- Step 1: Sum transactions per account
+WITH total_transactions AS (
+  SELECT 
+    account_number,
+    SUM(amount) AS total_paid
+  FROM transactions
+  GROUP BY account_number
+),
+
+-- Step 2: Add cumulative EMI per account
+emi_with_cumsum AS (
+  SELECT
+    e.account_number,
+    e.term,
+    e.amount AS emi_amount,
+    SUM(e.amount) OVER (
+      PARTITION BY e.account_number 
+      ORDER BY e.term
+    ) AS cumulative_emi
+  FROM emi e
+),
+
+-- Step 3: Join EMIs with aggregated transactions and calculate paid amount
+emi_with_paid AS (
+  SELECT
+    emi.account_number,
+    emi.term,
+    emi.emi_amount,
+    t.total_paid,
+    CASE
+      WHEN t.total_paid >= emi.cumulative_emi THEN emi.emi_amount
+      WHEN t.total_paid >= emi.cumulative_emi - emi.emi_amount THEN t.total_paid - (emi.cumulative_emi - emi.emi_amount)
+      ELSE 0
+    END AS paid_amount
+  FROM emi_with_cumsum emi
+  JOIN total_transactions t ON t.account_number = emi.account_number
+),
+
+-- Step 4: Calculate remaining amount after each EMI is applied
+final_output AS (
+  SELECT
+    account_number,
+    term,
+    emi_amount AS amount,
+    paid_amount,
+    GREATEST(
+      total_paid - SUM(paid_amount) OVER (
+        PARTITION BY account_number 
+        ORDER BY term
+      ), 
+      0
+    ) AS remaining_amount
+  FROM emi_with_paid
+)
+
+-- Final result
+SELECT * FROM final_output
+ORDER BY account_number, term;
