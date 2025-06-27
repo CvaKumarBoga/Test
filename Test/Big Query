@@ -432,3 +432,32 @@ final_output AS (
 -- Final result
 SELECT * FROM final_output
 ORDER BY account_number, term;
+
+
+
+Write a big query I have a table transaction fields like account number and amount
+
+Data: 1, 1500
+
+And another table emi table and columns are account number, term, amount
+Data: 1, 1, 500
+1, 2, 500
+1, 3, 500
+1, 4, 500
+
+Expected output: total emi amount is 1500 so
+account number, term, amount, paid amount, remaining amount
+Data: 1, 1, 500, 500, 1500
+1, 2, 500, 500, 1000
+1, 3, 500, 500, 500
+1, 4, 500,0, 0
+
+Use case:
+If transaction amount is 800
+Then the output is
+account number, term, amount, paid amount, remaining amount
+Data: 1, 1, 500, 500, 300
+1, 2, 500, 300, 0
+1, 3, 500, 0, 0
+1, 4, 500,0, 0
+
