@@ -1,3 +1,137 @@
+WITH transactions AS (
+  SELECT * FROM UNNEST([
+    STRUCT(101 AS account_number, 300 AS amount),
+    STRUCT(102 AS account_number, 700 AS amount),
+    STRUCT(103 AS account_number, 500 AS amount),
+    STRUCT(104 AS account_number, 1000 AS amount)
+  ])
+),
+emis AS (
+  SELECT * FROM UNNEST([
+    STRUCT(101 AS account_number, 1 AS emi_id, 1 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(101 AS account_number, 1 AS emi_id, 1 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(101 AS account_number, 3 AS emi_id, 1 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(101 AS account_number, 3 AS emi_id, 1 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(102 AS account_number, 2 AS emi_id, 1 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(102 AS account_number, 2 AS emi_id, 2 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(102 AS account_number, 2 AS emi_id, 3 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(102 AS account_number, 1 AS emi_id, 1 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(102 AS account_number, 1 AS emi_id, 2 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(103 AS account_number, 1 AS emi_id, 1 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(104 AS account_number, 1 AS emi_id, 1 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(104 AS account_number, 1 AS emi_id, 2 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(104 AS account_number, 1 AS emi_id, 3 AS term_counter, 500 AS emi_amount, 'A' AS status),
+    STRUCT(104 AS account_number, 1 AS emi_id, 4 AS term_counter, 500 AS emi_amount, 'A' AS status)
+  ])
+),
+-- Assign row numbers to sort EMIs
+sorted_emis AS (
+  SELECT 
+    e.*,
+    COALESCE(t.amount, 0) AS transaction_amount,
+    ROW_NUMBER() OVER (PARTITION BY e.account_number ORDER BY emi_id, term_counter) AS rn
+  FROM emis e
+  LEFT JOIN transactions t USING (account_number)
+),
+-- Recursive CTE to apply payments
+recursive_payment AS (
+  -- First EMI row per account
+  SELECT
+    account_number,
+    emi_id,
+    term_counter,
+    emi_amount,
+    status,
+    transaction_amount,
+    rn,
+    LEAST(transaction_amount, emi_amount) AS paid_amount,
+    transaction_amount - LEAST(transaction_amount, emi_amount) AS remaining_balance
+  FROM sorted_emis
+  WHERE rn = 1
+
+  UNION ALL
+
+  -- Process next EMI row with remaining balance
+  SELECT
+    e.account_number,
+    e.emi_id,
+    e.term_counter,
+    e.emi_amount,
+    e.status,
+    e.transaction_amount,
+    e.rn,
+    LEAST(p.remaining_balance, e.emi_amount) AS paid_amount,
+    p.remaining_balance - LEAST(p.remaining_balance, e.emi_amount) AS remaining_balance
+  FROM sorted_emis e
+  JOIN recursive_payment p
+    ON e.account_number = p.account_number
+    AND e.rn = p.rn + 1
+)
+SELECT 
+  account_number,
+  emi_id,
+  term_counter,
+  emi_amount,
+  status,
+  paid_amount
+FROM recursive_payment
+ORDER BY account_number, emi_id, term_counter;
+
+
+
+
+Write a big query subtract transaction amount from emi amount and if over payment amount compared to emi amount then subtract remaining amount from next emi amount
+
+Transaction table
+account_number, amount
+101, 300
+102, 700
+103, 500
+104, 1000
+
+Emi table:
+account_number, emi_id, term_counter, emi_amount,status
+101, 1, 1, 500, A
+101,1, 1, 500, A
+101, 3, 1, 500, A
+101, 3, 1, 500, A
+102, 2, 1, 500, A
+102, 2, 2, 500, A
+102, 2, 3, 500, A
+102, 1, 1, 500, A
+102, 1, 2, 500, A
+103, 1, 1, 500, A
+104, 1, 1, 500, A
+104, 1, 2, 500, A
+104, 1, 3, 500, A
+104, 1, 4, 500, A
+
+Note: one account having more than one emi id and need to sort the based on account number, emi id and terms and then need to apply transaction amount
+
+Expected output create select and add one extra column i.e paid_amount and arrange transaction amount like below table
+
+account_number, emi_id, term_counter, emi_amount,status, paid_amount
+101, 1, 1, 500, A, 300
+101,1, 1, 500, A,0
+101, 3, 1, 500, A,0
+101, 3, 1, 500, A,0
+102, 2, 1, 500, A,0
+102, 2, 2, 500, A, 0
+102, 2, 3, 500, A,0
+102, 1, 1, 500, A,500
+102, 1, 2, 500, A,200
+103, 1, 1, 500, A,500
+104, 1, 1, 300, A, 300
+104, 1, 2, 500, A,500
+104, 1, 3, 500, A,200
+104, 1, 4, 500, A,0
+
+Transaction amount is eligible to subtract after subtract from current emi or previous emis then add emis amount if less amount subtract transaction amount from emi amount and transaction amount is applied sufficient emi and add zero to other emis
+
+
+
+
+
 -- Step 1: Order transactions and arrangements for processing
 WITH ordered_txns AS (
   SELECT 
